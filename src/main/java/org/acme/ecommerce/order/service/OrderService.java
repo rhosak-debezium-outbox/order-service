@@ -1,21 +1,22 @@
 package org.acme.ecommerce.order.service;
 
+import java.net.URI;
 import java.time.OffsetDateTime;
+import java.util.UUID;
 import javax.enterprise.context.ApplicationScoped;
 import javax.inject.Inject;
 import javax.persistence.EntityManager;
 import javax.persistence.LockModeType;
 import javax.transaction.Transactional;
 
-import io.smallrye.reactive.messaging.ce.OutgoingCloudEventMetadata;
-import io.smallrye.reactive.messaging.ce.OutgoingCloudEventMetadataBuilder;
-import io.smallrye.reactive.messaging.kafka.KafkaRecord;
-import io.vertx.core.json.JsonObject;
+import io.cloudevents.CloudEvent;
+import io.cloudevents.core.builder.CloudEventBuilder;
+import io.cloudevents.core.format.EventFormat;
+import io.cloudevents.core.provider.EventFormatProvider;
+import io.cloudevents.jackson.JsonFormat;
 import org.acme.ecommerce.order.model.Order;
 import org.acme.ecommerce.order.model.OrderStatus;
-import org.eclipse.microprofile.reactive.messaging.Channel;
-import org.eclipse.microprofile.reactive.messaging.Emitter;
-import org.eclipse.microprofile.reactive.messaging.Message;
+import org.acme.ecommerce.order.model.OutboxEvent;
 
 @ApplicationScoped
 public class OrderService {
@@ -23,37 +24,35 @@ public class OrderService {
     @Inject
     EntityManager entityManager;
 
-    @Inject
-    @Channel("order-event")
-    Emitter<JsonObject> emitter;
-
+    @Transactional
     public Long create(Order order) {
-        order = doCreate(order);
-        emitter.send(toMessage(order.getId().toString(), order));
+        order.setStatus(OrderStatus.CREATED);
+        entityManager.persist(order);
+        OutboxEvent outboxEvent = buildOutBoxEvent(order);
+        entityManager.persist(outboxEvent);
+        entityManager.remove(outboxEvent);
         return order.getId();
     }
 
-    public Order get(Long orderId) {
-        return doGet(orderId);
-    }
-
     @Transactional
-    Order doCreate(Order order) {
-        order.setStatus(OrderStatus.CREATED);
-        entityManager.persist(order);
-        return order;
-    }
-
-    @Transactional
-    Order doGet(Long id) {
+    public Order get(Long id) {
         return entityManager.find(Order.class, id, LockModeType.OPTIMISTIC);
     }
 
-    @SuppressWarnings("rawtypes")
-    private Message<JsonObject> toMessage(String key, Order order) {
-        OutgoingCloudEventMetadataBuilder cloudEventMetadataBuilder = OutgoingCloudEventMetadata.builder().withType("OrderCreatedEvent")
-                .withTimestamp(OffsetDateTime.now().toZonedDateTime());
-        return KafkaRecord.of(key, order.toJson()).addMetadata(cloudEventMetadataBuilder.build());
+    OutboxEvent buildOutBoxEvent(Order order) {
+        OutboxEvent outboxEvent = new OutboxEvent();
+        outboxEvent.setAggregateType("order-event");
+        outboxEvent.setAggregateId(Long.toString(order.getId()));
+        outboxEvent.setContentType("application/cloudevents+json; charset=UTF-8");
+        outboxEvent.setPayload(toCloudEvent(order));
+        return outboxEvent;
+    }
+
+    String toCloudEvent(Order order) {
+        CloudEvent event = CloudEventBuilder.v1().withType("OrderCreatedEvent").withTime(OffsetDateTime.now()).withSource(URI.create("ecommerce/order-service"))
+                .withDataContentType("application/json").withId(UUID.randomUUID().toString()).withData(order.toJson().encode().getBytes()).build();
+        EventFormat format = EventFormatProvider.getInstance().resolveFormat(JsonFormat.CONTENT_TYPE);
+        return new String(format.serialize(event));
     }
 
 }
