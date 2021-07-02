@@ -17,12 +17,16 @@ import io.cloudevents.jackson.JsonFormat;
 import org.acme.ecommerce.order.model.Order;
 import org.acme.ecommerce.order.model.OrderStatus;
 import org.acme.ecommerce.order.model.OutboxEvent;
+import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 @ApplicationScoped
 public class OrderService {
 
     @Inject
     EntityManager entityManager;
+
+    @ConfigProperty(name = "order-event.aggregate.type", defaultValue = "order-event")
+    String aggregateType;
 
     @Transactional
     public Long create(Order order) {
@@ -41,7 +45,7 @@ public class OrderService {
 
     OutboxEvent buildOutBoxEvent(Order order) {
         OutboxEvent outboxEvent = new OutboxEvent();
-        outboxEvent.setAggregateType("order-event");
+        outboxEvent.setAggregateType(aggregateType);
         outboxEvent.setAggregateId(Long.toString(order.getId()));
         outboxEvent.setContentType("application/cloudevents+json; charset=UTF-8");
         outboxEvent.setPayload(toCloudEvent(order));
